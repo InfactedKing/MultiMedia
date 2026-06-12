@@ -1,16 +1,26 @@
-/* Backlogd — a Letterboxd-style tracker for movies, TV shows & games.
-   All state lives in localStorage; no backend required. */
+/* MultiMedia — a Letterboxd-style tracker for movies, TV shows & games.
+   Live data from TMDB (movies/TV) and RAWG (games); state in localStorage. */
 
 // ---------------------------------------------------------------------------
-// State
+// State & storage
 // ---------------------------------------------------------------------------
-const STORAGE_KEY = "backlogd-v1";
+const STORAGE_KEY = "multimedia-v1";
+const LEGACY_KEY = "backlogd-v1";
 
 const state = {
-  view: "movies",            // movies | tv | games | diary
-  selectedVibes: {},         // per-section vibe selection: { movies: Set, ... }
-  search: {},                // per-section search text
-  diary: { typeFilter: "all", minRating: 0, vibeFilter: "all", sortBy: "date", sortDir: "desc" },
+  route: { section: "movies", page: "browse" }, // page: browse|vibe|diary, or section:null + page: diary-all|settings
+  expanded: { movies: true, tv: false, games: false },
+  browse: {
+    movies: { query: "", items: null, error: null, seq: 0 },
+    tv: { query: "", items: null, error: null, seq: 0 },
+    games: { query: "", items: null, error: null, seq: 0 },
+  },
+  vibe: {
+    movies: { answers: [null, null, null], results: null, loading: false, error: null },
+    tv: { answers: [null, null, null], results: null, loading: false, error: null },
+    games: { answers: [null, null, null], results: null, loading: false, error: null },
+  },
+  diary: { typeFilter: "all", minRating: 0, sortBy: "date", sortDir: "desc" },
   modal: { itemId: null, rating: 0 },
   data: load(),
 };
@@ -19,186 +29,397 @@ function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
-  } catch (e) { /* corrupted storage — start fresh */ }
-  return { watchlist: [], finished: [], custom: [] };
+  } catch (e) { /* corrupted storage — fall through */ }
+
+  // Migrate data from the previous version of the site.
+  try {
+    const legacy = localStorage.getItem(LEGACY_KEY);
+    if (legacy) {
+      const old = JSON.parse(legacy);
+      const library = {};
+      const lookup = (id) => CATALOG.find((c) => c.id === id) || (old.custom || []).find((c) => c.id === id);
+      for (const id of (old.watchlist || [])) { const it = lookup(id); if (it) library[id] = it; }
+      for (const e of (old.finished || [])) { const it = lookup(e.id); if (it) library[e.id] = it; }
+      return { keys: { tmdb: "", rawg: "" }, watchlist: old.watchlist || [], finished: old.finished || [], library };
+    }
+  } catch (e) { /* ignore broken legacy data */ }
+
+  return { keys: { tmdb: "", rawg: "" }, watchlist: [], finished: [], library: {} };
 }
 
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.data));
 }
 
-function allItems() {
-  return CATALOG.concat(state.data.custom);
+API.keys = state.data.keys;
+
+// ---------------------------------------------------------------------------
+// Item lookup — library snapshots, seed catalog, then live result sets
+// ---------------------------------------------------------------------------
+function findItem(id) {
+  if (state.data.library[id]) return state.data.library[id];
+  const seed = CATALOG.find((c) => c.id === id);
+  if (seed) return seed;
+  for (const type of Object.keys(SECTIONS)) {
+    const hit = (state.browse[type].items || []).find((i) => i.id === id)
+      || (state.vibe[type].results || []).find((i) => i.id === id);
+    if (hit) return hit;
+  }
+  return null;
 }
 
-function getItem(id) {
-  return allItems().find((it) => it.id === id);
+function remember(item) {
+  // Snapshot item metadata so watchlist/diary entries survive across sessions.
+  state.data.library[item.id] = {
+    id: item.id, type: item.type, title: item.title, year: item.year,
+    poster: item.poster || null, genres: item.genres || [],
+  };
 }
 
 function getEntry(id) {
   return state.data.finished.find((e) => e.id === id);
 }
 
-function vibeLabel(id) {
-  const v = VIBES.find((v) => v.id === id);
-  return v ? v.label : id;
-}
-
 // ---------------------------------------------------------------------------
-// Card visuals — deterministic gradient per title (no poster art needed)
+// Small helpers
 // ---------------------------------------------------------------------------
-function hashCode(str) {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
-function posterStyle(item) {
-  const h = hashCode(item.title);
-  const h1 = h % 360;
-  const h2 = (h1 + 40 + (h % 60)) % 360;
-  return `background: linear-gradient(160deg, hsl(${h1},45%,28%), hsl(${h2},55%,16%))`;
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 function stars(n) {
   return "★".repeat(n) + "☆".repeat(5 - n);
 }
 
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
+function hashCode(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = (Math.imul(31, h) + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function gradient(item) {
+  const h = hashCode(item.title);
+  const h1 = h % 360, h2 = (h1 + 40 + (h % 60)) % 360;
+  return `background:linear-gradient(160deg,hsl(${h1},45%,28%),hsl(${h2},55%,16%))`;
+}
+
+function crumbs(parts) {
+  return `<div class="crumbs">🗂️ MultiMedia ${parts.map((p) => `<span class="crumb-sep">/</span> ${esc(p)}`).join(" ")}</div>`;
 }
 
 // ---------------------------------------------------------------------------
-// Rendering
+// Sidebar (file-explorer tree)
 // ---------------------------------------------------------------------------
-const app = document.getElementById("app");
+const sidebarEl = document.getElementById("sidebar");
+const appEl = document.getElementById("app");
 
-function render() {
-  document.querySelectorAll(".nav-btn").forEach((b) =>
-    b.classList.toggle("active", b.dataset.nav === state.view)
-  );
-  if (state.view === "diary") renderDiary();
-  else renderSection(state.view);
+const PAGES = [
+  { id: "browse", label: "Browse", icon: "🔍" },
+  { id: "vibe", label: "Vibe Finder", icon: "✨" },
+  { id: "diary", label: "Diary", icon: "📔" },
+];
+
+function renderSidebar() {
+  const r = state.route;
+  sidebarEl.innerHTML = `
+    <div class="side-head">🗂️ MultiMedia</div>
+    <nav class="tree">
+      ${Object.entries(SECTIONS).map(([key, s]) => `
+        <div class="tree-folder">
+          <button class="folder-row ${r.section === key ? "in-path" : ""}" data-folder="${key}">
+            <span class="chevron">${state.expanded[key] ? "▾" : "▸"}</span>
+            <span class="folder-icon">${state.expanded[key] ? "📂" : "📁"}</span> ${s.label}
+          </button>
+          <div class="folder-children ${state.expanded[key] ? "" : "hidden"}">
+            ${PAGES.map((p) => `
+              <button class="tree-item ${r.section === key && r.page === p.id ? "active" : ""}"
+                      data-section="${key}" data-page="${p.id}">
+                <span class="tree-guide"></span>${p.icon} ${p.label}
+              </button>`).join("")}
+          </div>
+        </div>`).join("")}
+      <div class="tree-sep"></div>
+      <button class="tree-item root ${r.page === "diary-all" ? "active" : ""}" data-root="diary-all">🗃️ Diary — everything</button>
+      <button class="tree-item root ${r.page === "settings" ? "active" : ""}" data-root="settings">⚙️ Settings</button>
+    </nav>
+    <div class="side-foot">${countFinished()} logged · ${state.data.watchlist.length} saved</div>`;
 }
 
+function countFinished() {
+  return state.data.finished.length;
+}
+
+sidebarEl.addEventListener("click", (e) => {
+  const folder = e.target.closest("[data-folder]");
+  if (folder) {
+    const key = folder.dataset.folder;
+    state.expanded[key] = !state.expanded[key];
+    // Opening a folder also navigates to its Browse page.
+    if (state.expanded[key]) state.route = { section: key, page: "browse" };
+    render();
+    return;
+  }
+  const item = e.target.closest("[data-page]");
+  if (item) {
+    state.route = { section: item.dataset.section, page: item.dataset.page };
+    render();
+    closeSidebarOnMobile();
+    return;
+  }
+  const root = e.target.closest("[data-root]");
+  if (root) {
+    state.route = { section: null, page: root.dataset.root };
+    render();
+    closeSidebarOnMobile();
+  }
+});
+
+document.getElementById("sidebar-toggle").addEventListener("click", () => {
+  sidebarEl.classList.toggle("open");
+});
+
+function closeSidebarOnMobile() {
+  sidebarEl.classList.remove("open");
+}
+
+// ---------------------------------------------------------------------------
+// Cards
+// ---------------------------------------------------------------------------
 function cardHTML(item) {
   const entry = getEntry(item.id);
   const inList = state.data.watchlist.includes(item.id);
   const section = SECTIONS[item.type];
+  const posterInner = item.poster
+    ? `<div class="poster has-img" style="background-image:url('${esc(item.poster)}')">`
+    : `<div class="poster" style="${gradient(item)}"><span class="poster-icon">${section.icon}</span><span class="poster-title">${esc(item.title)}</span>`;
   return `
-    <article class="card" data-id="${item.id}">
-      <div class="poster" style="${posterStyle(item)}">
-        <span class="poster-icon">${section.icon}</span>
-        <span class="poster-title">${esc(item.title)}</span>
-        ${entry ? `<span class="poster-badge rated" title="${section.verb}">${stars(entry.rating)}</span>` : ""}
+    <article class="card" data-id="${esc(item.id)}">
+      ${posterInner}
+        ${entry ? `<span class="poster-badge rated">${stars(entry.rating)}</span>` : ""}
         ${inList && !entry ? `<span class="poster-badge listed">＋ ${section.listName}</span>` : ""}
       </div>
-      <div class="card-meta">
-        <span class="card-year">${item.year}</span>
-        <span class="card-genres">${item.genres.map(esc).join(" · ")}</span>
-      </div>
-      <div class="card-vibes">${item.vibes.map((v) => `<span class="mini-vibe">${vibeLabel(v).split(" ")[0]}</span>`).join("")}</div>
-      <div class="card-actions">
-        <button class="btn btn-small ${inList ? "btn-active" : ""}" data-action="toggle-list" title="${inList ? "Remove from" : "Add to"} ${section.listName.toLowerCase()}">
-          ${inList ? "✓ Listed" : `＋ ${section.listName}`}
-        </button>
-        <button class="btn btn-small ${entry ? "btn-rated" : ""}" data-action="finish" title="${entry ? "Edit your log" : "Mark as finished & rate"}">
-          ${entry ? `★ ${entry.rating}/5` : "✔ Finished"}
-        </button>
+      <div class="card-body">
+        <h3 class="card-title">${esc(item.title)}</h3>
+        <div class="card-meta">
+          <span>${item.year || "—"}</span>
+          ${item.score ? `<span class="card-score">★ ${esc(item.score)}</span>` : ""}
+        </div>
+        <div class="card-genres">${(item.genres || []).map(esc).join(" · ")}</div>
+        <div class="card-actions">
+          <button class="btn btn-small ${inList ? "btn-active" : ""}" data-action="toggle-list">
+            ${inList ? "✓ Listed" : `＋ ${section.listName}`}
+          </button>
+          <button class="btn btn-small ${entry ? "btn-rated" : ""}" data-action="finish">
+            ${entry ? `★ ${entry.rating}/5` : "✔ Finished"}
+          </button>
+        </div>
       </div>
     </article>`;
 }
 
-function renderSection(type) {
+function grid(items) {
+  return `<div class="card-grid">${items.map(cardHTML).join("")}</div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Pages
+// ---------------------------------------------------------------------------
+function render() {
+  renderSidebar();
+  const { section, page } = state.route;
+  if (page === "settings") return renderSettings();
+  if (page === "diary-all") return renderDiary(null);
+  if (page === "diary") return renderDiary(section);
+  if (page === "vibe") return renderVibe(section);
+  return renderBrowse(section);
+}
+
+// ----- Browse ---------------------------------------------------------------
+function renderBrowse(type) {
   const section = SECTIONS[type];
-  const selected = state.selectedVibes[type] || new Set();
-  const query = (state.search[type] || "").toLowerCase();
+  const b = state.browse[type];
+  const listItems = state.data.watchlist
+    .map(findItem)
+    .filter((it) => it && it.type === type && !getEntry(it.id));
 
-  const items = allItems().filter((it) => it.type === type);
-  const listItems = items.filter((it) => state.data.watchlist.includes(it.id) && !getEntry(it.id));
-
-  // Vibe finder: rank by number of selected vibes matched, hide non-matches.
-  let results = items;
-  if (selected.size > 0) {
-    results = items
-      .map((it) => ({ it, score: it.vibes.filter((v) => selected.has(v)).length }))
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score || a.it.title.localeCompare(b.it.title))
-      .map((r) => r.it);
-  }
-  if (query) {
-    results = results.filter(
-      (it) => it.title.toLowerCase().includes(query) || it.genres.some((g) => g.toLowerCase().includes(query))
-    );
-  }
-
-  app.innerHTML = `
-    <section class="section-view">
-      <div class="section-head">
+  appEl.innerHTML = `
+    <section class="page">
+      ${crumbs([section.label, "Browse"])}
+      <div class="page-head">
         <h1>${section.icon} ${section.label}</h1>
-        <button class="btn" data-action="open-add">＋ Add your own</button>
-      </div>
-
-      <div class="panel vibe-panel">
-        <h2>✨ What's your vibe right now?</h2>
-        <p class="panel-hint">Pick one or more moods and we'll find something that fits.</p>
-        <div class="vibe-chips">
-          ${VIBES.map((v) => `<button class="chip ${selected.has(v.id) ? "chip-on" : ""}" data-vibe="${v.id}">${v.label}</button>`).join("")}
-        </div>
-        ${selected.size > 0 ? `<button class="btn btn-small clear-vibes" data-action="clear-vibes">✕ Clear vibes</button>` : ""}
+        ${API.hasKey(type)
+          ? `<span class="live-badge">● live — ${type === "games" ? "RAWG" : "TMDB"}</span>`
+          : `<span class="live-badge off">○ offline catalog — <a href="#" data-goto="settings">add an API key</a></span>`}
       </div>
 
       ${listItems.length > 0 ? `
-      <div class="panel">
-        <h2>📌 Your ${section.listName} <span class="count">${listItems.length}</span></h2>
-        <div class="card-grid">${listItems.map(cardHTML).join("")}</div>
-      </div>` : ""}
+        <div class="panel">
+          <h2>📌 Your ${section.listName} <span class="count">${listItems.length}</span></h2>
+          ${grid(listItems)}
+        </div>` : ""}
 
       <div class="panel">
         <div class="browse-head">
-          <h2>${selected.size > 0 ? "🎯 Matching your vibe" : "🗂️ Browse all"} <span class="count">${results.length}</span></h2>
-          <input type="search" class="search-input" placeholder="Search ${section.label.toLowerCase()}…" value="${esc(state.search[type] || "")}" data-action="search" />
+          <h2>${b.query ? "🔎 Results" : "🔥 Popular right now"}</h2>
+          <input type="search" class="search-input" id="browse-search"
+                 placeholder="Search ${section.label.toLowerCase()}…" value="${esc(b.query)}" />
         </div>
-        ${results.length > 0
-          ? `<div class="card-grid">${results.map(cardHTML).join("")}</div>`
-          : `<p class="empty">Nothing matches — try different vibes or add your own title.</p>`}
+        <div id="browse-results">${browseResultsHTML(type)}</div>
       </div>
+    </section>`;
+
+  if (b.items === null && !b.error) loadBrowse(type);
+}
+
+function browseResultsHTML(type) {
+  const b = state.browse[type];
+  if (b.error) return `<p class="empty error">${esc(b.error)}</p>`;
+  if (b.items === null) return `<p class="empty">Loading…</p>`;
+  if (b.items.length === 0) return `<p class="empty">No results found.</p>`;
+  return grid(b.items);
+}
+
+async function loadBrowse(type) {
+  const b = state.browse[type];
+  const seq = ++b.seq;
+  b.error = null;
+
+  if (!API.hasKey(type)) {
+    b.items = API.fallbackBrowse(type, b.query);
+    paintBrowse(type, seq);
+    return;
+  }
+  try {
+    const items = b.query ? await API.search(type, b.query) : await API.popular(type);
+    if (seq !== b.seq) return; // a newer request superseded this one
+    b.items = items;
+  } catch (err) {
+    if (seq !== b.seq) return;
+    b.items = [];
+    b.error = err.message;
+  }
+  paintBrowse(type, seq);
+}
+
+function paintBrowse(type, seq) {
+  if (state.route.section !== type || state.route.page !== "browse") return;
+  if (seq !== state.browse[type].seq) return;
+  const el = document.getElementById("browse-results");
+  if (el) el.innerHTML = browseResultsHTML(type);
+}
+
+let searchTimer = null;
+appEl.addEventListener("input", (e) => {
+  if (e.target.id !== "browse-search") return;
+  const type = state.route.section;
+  state.browse[type].query = e.target.value.trim();
+  state.browse[type].items = null;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadBrowse(type), 400);
+});
+
+// ----- Vibe finder ------------------------------------------------------------
+function renderVibe(type) {
+  const section = SECTIONS[type];
+  const cfg = VIBE_QUESTIONS[type];
+  const v = state.vibe[type];
+  const ready = v.answers.every((a) => a !== null);
+
+  appEl.innerHTML = `
+    <section class="page">
+      ${crumbs([section.label, "Vibe Finder"])}
+      <h1 class="vibe-heading">${esc(cfg.heading).replace(/tonight\?$/, "")}<span class="accent">tonight?</span></h1>
+
+      <div class="panel vibe-panel">
+        ${cfg.questions.map((q, qi) => `
+          <div class="vibe-q">
+            <h3>${esc(q.q)}</h3>
+            <div class="pill-row">
+              ${q.options.map((opt, oi) => `
+                <button class="pill ${v.answers[qi] === oi ? "pill-on" : ""}" data-q="${qi}" data-o="${oi}">${esc(opt)}</button>
+              `).join("")}
+            </div>
+          </div>`).join("")}
+        <button class="btn btn-find" id="vibe-find" ${ready ? "" : "disabled"}>⚡ ${esc(cfg.button)}</button>
+        ${!API.hasKey(type) ? `<p class="panel-hint">Using the built-in catalog — <a href="#" data-goto="settings">add an API key</a> for live results from ${type === "games" ? "RAWG" : "TMDB"}.</p>` : ""}
+      </div>
+
+      <div id="vibe-results">${vibeResultsHTML(type)}</div>
     </section>`;
 }
 
-function renderDiary() {
+function vibeResultsHTML(type) {
+  const v = state.vibe[type];
+  if (v.loading) return `<div class="panel"><p class="empty">Finding your ${SECTIONS[type].noun}…</p></div>`;
+  if (v.error) return `<div class="panel"><p class="empty error">${esc(v.error)}</p></div>`;
+  if (v.results === null) return "";
+  if (v.results.length === 0) return `<div class="panel"><p class="empty">Nothing matched — try different answers.</p></div>`;
+  return `<div class="panel"><h2>🎯 Your matches <span class="count">${v.results.length}</span></h2>${grid(v.results)}</div>`;
+}
+
+async function runVibeSearch(type) {
+  const v = state.vibe[type];
+  v.loading = true;
+  v.error = null;
+  v.results = null;
+  paintVibe(type);
+  try {
+    v.results = API.hasKey(type)
+      ? await API.vibe(type, v.answers)
+      : API.fallbackVibe(type, v.answers);
+  } catch (err) {
+    v.error = err.message;
+    v.results = [];
+  }
+  v.loading = false;
+  paintVibe(type);
+}
+
+function paintVibe(type) {
+  if (state.route.section !== type || state.route.page !== "vibe") return;
+  const el = document.getElementById("vibe-results");
+  if (el) el.innerHTML = vibeResultsHTML(type);
+}
+
+// ----- Diary -----------------------------------------------------------------
+function renderDiary(type) {
   const f = state.diary;
+  const scopeLabel = type ? SECTIONS[type].label : "Everything";
+
   let entries = state.data.finished
-    .map((e) => ({ entry: e, item: getItem(e.id) }))
+    .map((e) => ({ entry: e, item: findItem(e.id) }))
     .filter((x) => x.item);
 
-  if (f.typeFilter !== "all") entries = entries.filter((x) => x.item.type === f.typeFilter);
+  if (type) entries = entries.filter((x) => x.item.type === type);
+  else if (f.typeFilter !== "all") entries = entries.filter((x) => x.item.type === f.typeFilter);
   if (f.minRating > 0) entries = entries.filter((x) => x.entry.rating >= f.minRating);
-  if (f.vibeFilter !== "all") entries = entries.filter((x) => x.item.vibes.includes(f.vibeFilter));
 
   const dir = f.sortDir === "asc" ? 1 : -1;
   entries.sort((a, b) => {
     switch (f.sortBy) {
       case "rating": return dir * (a.entry.rating - b.entry.rating);
       case "title":  return dir * a.item.title.localeCompare(b.item.title);
-      case "year":   return dir * (a.item.year - b.item.year);
-      default:       return dir * a.entry.date.localeCompare(b.entry.date); // date finished
+      case "year":   return dir * ((a.item.year || 0) - (b.item.year || 0));
+      default:       return dir * a.entry.date.localeCompare(b.entry.date);
     }
   });
 
-  const total = state.data.finished.length;
-  const avg = total ? (state.data.finished.reduce((s, e) => s + e.rating, 0) / total).toFixed(1) : "—";
+  const scoped = type
+    ? state.data.finished.filter((e) => { const it = findItem(e.id); return it && it.type === type; })
+    : state.data.finished;
+  const avg = scoped.length ? (scoped.reduce((s, e) => s + e.rating, 0) / scoped.length).toFixed(1) : "—";
 
-  app.innerHTML = `
-    <section class="section-view">
-      <div class="section-head">
-        <h1>📔 Diary</h1>
-        <span class="diary-stats">${total} logged · avg ★ ${avg}</span>
+  appEl.innerHTML = `
+    <section class="page">
+      ${crumbs(type ? [SECTIONS[type].label, "Diary"] : ["Diary"])}
+      <div class="page-head">
+        <h1>📔 Diary <span class="head-dim">— ${esc(scopeLabel)}</span></h1>
+        <span class="diary-stats">${scoped.length} logged · avg ★ ${avg}</span>
       </div>
 
       <div class="panel filter-bar">
+        ${!type ? `
         <label>Type
           <select data-filter="typeFilter">
             <option value="all" ${f.typeFilter === "all" ? "selected" : ""}>Everything</option>
@@ -206,16 +427,10 @@ function renderDiary() {
             <option value="tv" ${f.typeFilter === "tv" ? "selected" : ""}>📺 TV Shows</option>
             <option value="games" ${f.typeFilter === "games" ? "selected" : ""}>🎮 Games</option>
           </select>
-        </label>
+        </label>` : ""}
         <label>Min rating
           <select data-filter="minRating">
             ${[0, 1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${f.minRating === n ? "selected" : ""}>${n === 0 ? "Any" : "★".repeat(n) + "+"}</option>`).join("")}
-          </select>
-        </label>
-        <label>Vibe
-          <select data-filter="vibeFilter">
-            <option value="all" ${f.vibeFilter === "all" ? "selected" : ""}>Any vibe</option>
-            ${VIBES.map((v) => `<option value="${v.id}" ${f.vibeFilter === v.id ? "selected" : ""}>${v.label}</option>`).join("")}
           </select>
         </label>
         <label>Sort by
@@ -226,27 +441,75 @@ function renderDiary() {
             <option value="year" ${f.sortBy === "year" ? "selected" : ""}>Release year</option>
           </select>
         </label>
-        <button class="btn btn-small" data-action="toggle-dir" title="Toggle sort direction">${f.sortDir === "desc" ? "↓ Desc" : "↑ Asc"}</button>
+        <button class="btn btn-small" data-action="toggle-dir">${f.sortDir === "desc" ? "↓ Desc" : "↑ Asc"}</button>
       </div>
 
       ${entries.length === 0
-        ? `<div class="panel"><p class="empty">${total === 0
-            ? "Your diary is empty. Mark something as finished to start logging!"
+        ? `<div class="panel"><p class="empty">${scoped.length === 0
+            ? "Nothing logged here yet. Mark something as finished to start your diary."
             : "No entries match these filters."}</p></div>`
         : `<div class="diary-list">
             ${entries.map(({ entry, item }) => `
-              <article class="diary-row" data-id="${item.id}">
-                <div class="diary-poster" style="${posterStyle(item)}">${SECTIONS[item.type].icon}</div>
+              <article class="diary-row" data-id="${esc(item.id)}">
+                <div class="diary-poster" style="${item.poster ? `background-image:url('${esc(item.poster)}')` : gradient(item)}">${item.poster ? "" : SECTIONS[item.type].icon}</div>
                 <div class="diary-info">
-                  <h3>${esc(item.title)} <span class="diary-year">${item.year}</span></h3>
-                  <p class="diary-sub">${SECTIONS[item.type].verb} on ${entry.date}${item.genres.length ? " · " + item.genres.map(esc).join(", ") : ""}</p>
-                  ${entry.note ? `<p class="diary-note">“${esc(entry.note)}”</p>` : ""}
+                  <h3>${esc(item.title)} <span class="diary-year">${item.year || ""}</span></h3>
+                  <p class="diary-sub">${SECTIONS[item.type].icon} ${SECTIONS[item.type].verb} on ${esc(entry.date)}${item.genres && item.genres.length ? " · " + item.genres.map(esc).join(", ") : ""}</p>
+                  ${entry.note ? `<p class="diary-note">"${esc(entry.note)}"</p>` : ""}
                 </div>
                 <div class="diary-rating">${stars(entry.rating)}</div>
-                <button class="btn btn-small" data-action="finish" title="Edit this entry">✎ Edit</button>
+                <button class="btn btn-small" data-action="finish">✎ Edit</button>
               </article>`).join("")}
           </div>`}
     </section>`;
+}
+
+// ----- Settings ----------------------------------------------------------------
+function renderSettings() {
+  appEl.innerHTML = `
+    <section class="page">
+      ${crumbs(["Settings"])}
+      <h1>⚙️ Settings</h1>
+
+      <div class="panel">
+        <h2>🔌 Database connections</h2>
+        <p class="panel-hint">
+          MultiMedia pulls live data from free public databases. Both keys are free —
+          paste them below and they're stored only in your browser.
+        </p>
+        <label class="field">
+          <span>TMDB API key <em>(movies & TV shows)</em> — <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">get one here</a></span>
+          <input type="text" id="key-tmdb" placeholder="v3 key or v4 read access token" value="${esc(state.data.keys.tmdb)}" />
+        </label>
+        <label class="field">
+          <span>RAWG API key <em>(games)</em> — <a href="https://rawg.io/apidocs" target="_blank" rel="noopener">get one here</a></span>
+          <input type="text" id="key-rawg" placeholder="RAWG API key" value="${esc(state.data.keys.rawg)}" />
+        </label>
+        <div class="modal-actions">
+          <span class="save-note" id="keys-saved"></span>
+          <button class="btn btn-primary" id="save-keys">Save keys</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>ℹ️ About your data</h2>
+        <p class="panel-hint">
+          Your diary, ratings, watchlists and keys live in this browser's localStorage.
+          Until a key is added, each section uses a small built-in catalog so everything still works.
+        </p>
+      </div>
+    </section>`;
+
+  document.getElementById("save-keys").addEventListener("click", () => {
+    state.data.keys.tmdb = document.getElementById("key-tmdb").value.trim();
+    state.data.keys.rawg = document.getElementById("key-rawg").value.trim();
+    API.keys = state.data.keys;
+    save();
+    // Clear caches so Browse refetches with the new keys.
+    for (const t of Object.keys(SECTIONS)) { state.browse[t].items = null; state.browse[t].error = null; }
+    document.getElementById("keys-saved").textContent = "Saved ✓";
+    renderSidebar();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -256,14 +519,14 @@ const ratingModal = document.getElementById("rating-modal");
 const starLabels = ["Tap a star to rate", "★ Awful", "★★ Meh", "★★★ Decent", "★★★★ Great", "★★★★★ Masterpiece"];
 
 function openRatingModal(itemId) {
-  const item = getItem(itemId);
+  const item = findItem(itemId);
   if (!item) return;
   const entry = getEntry(itemId);
   state.modal.itemId = itemId;
   state.modal.rating = entry ? entry.rating : 0;
 
   document.getElementById("modal-title").textContent = entry ? "Edit your log" : `Log as ${SECTIONS[item.type].verb.toLowerCase()}`;
-  document.getElementById("modal-item-title").textContent = `${item.title} (${item.year})`;
+  document.getElementById("modal-item-title").textContent = `${item.title}${item.year ? ` (${item.year})` : ""}`;
   document.getElementById("finish-date").value = entry ? entry.date : new Date().toISOString().slice(0, 10);
   document.getElementById("finish-note").value = entry ? entry.note || "" : "";
   document.getElementById("modal-delete").classList.toggle("hidden", !entry);
@@ -295,6 +558,8 @@ document.getElementById("star-picker").addEventListener("click", (e) => {
 document.getElementById("modal-save").addEventListener("click", () => {
   const id = state.modal.itemId;
   if (!id || state.modal.rating === 0) return;
+  const item = findItem(id);
+  if (item) remember(item);
   const date = document.getElementById("finish-date").value || new Date().toISOString().slice(0, 10);
   const note = document.getElementById("finish-note").value.trim();
 
@@ -315,81 +580,31 @@ document.getElementById("modal-delete").addEventListener("click", () => {
 });
 
 document.getElementById("modal-close").addEventListener("click", closeRatingModal);
+ratingModal.addEventListener("click", (e) => { if (e.target === ratingModal) closeRatingModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRatingModal(); });
 
 // ---------------------------------------------------------------------------
-// Add-custom-title modal
+// Main content event handling
 // ---------------------------------------------------------------------------
-const addModal = document.getElementById("add-modal");
-const addVibesEl = document.getElementById("add-vibes");
-let addSelectedVibes = new Set();
-
-function openAddModal() {
-  const section = SECTIONS[state.view];
-  document.getElementById("add-modal-title").textContent = `Add a ${section.label.replace(/s$/, "").toLowerCase()}`;
-  document.getElementById("add-title").value = "";
-  document.getElementById("add-year").value = "";
-  document.getElementById("add-genres").value = "";
-  addSelectedVibes = new Set();
-  addVibesEl.innerHTML = VIBES.map((v) => `<button type="button" class="chip" data-vibe="${v.id}">${v.label}</button>`).join("");
-  addModal.classList.remove("hidden");
-}
-
-addVibesEl.addEventListener("click", (e) => {
-  const chip = e.target.closest("[data-vibe]");
-  if (!chip) return;
-  const v = chip.dataset.vibe;
-  addSelectedVibes.has(v) ? addSelectedVibes.delete(v) : addSelectedVibes.add(v);
-  chip.classList.toggle("chip-on", addSelectedVibes.has(v));
-});
-
-document.getElementById("add-save").addEventListener("click", () => {
-  const title = document.getElementById("add-title").value.trim();
-  if (!title) { document.getElementById("add-title").focus(); return; }
-  const year = Number(document.getElementById("add-year").value) || new Date().getFullYear();
-  const genres = document.getElementById("add-genres").value.split(",").map((g) => g.trim()).filter(Boolean);
-  state.data.custom.push({
-    id: "c" + Date.now(),
-    type: state.view,
-    title,
-    year,
-    genres,
-    vibes: [...addSelectedVibes],
-  });
-  save();
-  addModal.classList.add("hidden");
-  render();
-});
-
-document.getElementById("add-modal-close").addEventListener("click", () => addModal.classList.add("hidden"));
-
-// Close modals on backdrop click / Escape
-[ratingModal, addModal].forEach((m) =>
-  m.addEventListener("click", (e) => { if (e.target === m) m.classList.add("hidden"); })
-);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { ratingModal.classList.add("hidden"); addModal.classList.add("hidden"); }
-});
-
-// ---------------------------------------------------------------------------
-// Global event handling
-// ---------------------------------------------------------------------------
-document.querySelector(".site-header").addEventListener("click", (e) => {
-  const nav = e.target.closest("[data-nav]");
-  if (!nav) return;
-  e.preventDefault();
-  state.view = nav.dataset.nav;
-  render();
-});
-
-app.addEventListener("click", (e) => {
-  const chip = e.target.closest(".chip[data-vibe]");
-  if (chip) {
-    const type = state.view;
-    if (!state.selectedVibes[type]) state.selectedVibes[type] = new Set();
-    const set = state.selectedVibes[type];
-    const v = chip.dataset.vibe;
-    set.has(v) ? set.delete(v) : set.add(v);
+appEl.addEventListener("click", (e) => {
+  const goto = e.target.closest("[data-goto]");
+  if (goto) {
+    e.preventDefault();
+    state.route = { section: null, page: goto.dataset.goto };
     render();
+    return;
+  }
+
+  const pill = e.target.closest(".pill[data-q]");
+  if (pill) {
+    const type = state.route.section;
+    state.vibe[type].answers[Number(pill.dataset.q)] = Number(pill.dataset.o);
+    renderVibe(type);
+    return;
+  }
+
+  if (e.target.closest("#vibe-find")) {
+    runVibeSearch(state.route.section);
     return;
   }
 
@@ -401,10 +616,13 @@ app.addEventListener("click", (e) => {
 
   switch (action) {
     case "toggle-list": {
+      const item = findItem(id);
+      if (!item) break;
       if (state.data.watchlist.includes(id)) {
         state.data.watchlist = state.data.watchlist.filter((w) => w !== id);
       } else {
         state.data.watchlist.push(id);
+        remember(item);
       }
       save();
       render();
@@ -413,13 +631,6 @@ app.addEventListener("click", (e) => {
     case "finish":
       openRatingModal(id);
       break;
-    case "clear-vibes":
-      state.selectedVibes[state.view] = new Set();
-      render();
-      break;
-    case "open-add":
-      openAddModal();
-      break;
     case "toggle-dir":
       state.diary.sortDir = state.diary.sortDir === "desc" ? "asc" : "desc";
       render();
@@ -427,17 +638,7 @@ app.addEventListener("click", (e) => {
   }
 });
 
-app.addEventListener("input", (e) => {
-  if (e.target.matches("[data-action='search']")) {
-    state.search[state.view] = e.target.value;
-    const pos = e.target.selectionStart;
-    render();
-    const input = app.querySelector("[data-action='search']");
-    if (input) { input.focus(); input.setSelectionRange(pos, pos); }
-  }
-});
-
-app.addEventListener("change", (e) => {
+appEl.addEventListener("change", (e) => {
   const filter = e.target.dataset.filter;
   if (!filter) return;
   const val = e.target.value;
