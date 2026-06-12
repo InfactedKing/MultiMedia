@@ -3,26 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Backlogd — track movies, shows & games</title>
+  <title>MultiMedia — movies, shows & games</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="site-header">
-    <div class="header-inner">
-      <a class="logo" href="#" data-nav="movies">
-        <span class="logo-dots"><i class="dot dot-orange"></i><i class="dot dot-green"></i><i class="dot dot-blue"></i></span>
-        Backlogd
-      </a>
-      <nav class="main-nav">
-        <button class="nav-btn" data-nav="movies">🎬 Movies</button>
-        <button class="nav-btn" data-nav="tv">📺 TV Shows</button>
-        <button class="nav-btn" data-nav="games">🎮 Games</button>
-        <button class="nav-btn nav-diary" data-nav="diary">📔 Diary</button>
-      </nav>
-    </div>
-  </header>
+  <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
 
-  <main id="app"></main>
+  <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main id="app"></main>
+  </div>
 
   <!-- Rating modal (mark as finished / edit entry) -->
   <div class="modal-backdrop hidden" id="rating-modal">
@@ -53,34 +43,8 @@
     </div>
   </div>
 
-  <!-- Add custom title modal -->
-  <div class="modal-backdrop hidden" id="add-modal">
-    <div class="modal">
-      <button class="modal-close" id="add-modal-close" aria-label="Close">✕</button>
-      <h2 id="add-modal-title">Add a title</h2>
-      <label class="field">
-        <span>Title</span>
-        <input type="text" id="add-title" placeholder="e.g. The Thing" />
-      </label>
-      <label class="field">
-        <span>Year</span>
-        <input type="number" id="add-year" min="1900" max="2100" placeholder="1982" />
-      </label>
-      <label class="field">
-        <span>Genres <em>(comma separated)</em></span>
-        <input type="text" id="add-genres" placeholder="Horror, Sci-Fi" />
-      </label>
-      <div class="field">
-        <span>Vibes</span>
-        <div class="vibe-chips" id="add-vibes"></div>
-      </div>
-      <div class="modal-actions">
-        <button class="btn btn-primary" id="add-save">Add title</button>
-      </div>
-    </div>
-  </div>
-
   <script src="data.js"></script>
+  <script src="api.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

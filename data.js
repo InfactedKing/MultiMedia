@@ -1,24 +1,61 @@
-// Shared vibe taxonomy — used by the vibe finder in every section.
-const VIBES = [
-  { id: "cozy",       label: "🧸 Cozy & comforting" },
-  { id: "adrenaline", label: "⚡ Adrenaline rush" },
-  { id: "mindbending",label: "🌀 Mind-bending" },
-  { id: "emotional",  label: "😭 Emotional" },
-  { id: "funny",      label: "😂 Laugh out loud" },
-  { id: "scary",      label: "👻 Spine-chilling" },
-  { id: "epic",       label: "🗡️ Epic adventure" },
-  { id: "dark",       label: "🌑 Dark & gritty" },
-  { id: "nostalgic",  label: "📼 Nostalgic" },
-  { id: "romantic",   label: "💘 Romantic" },
-  { id: "chill",      label: "🌊 Chill & relaxing" },
-];
-
+// Section definitions ------------------------------------------------------
 const SECTIONS = {
-  movies: { label: "Movies",   icon: "🎬", listName: "Watchlist", verb: "Watched" },
-  tv:     { label: "TV Shows", icon: "📺", listName: "Watchlist", verb: "Watched" },
-  games:  { label: "Games",    icon: "🎮", listName: "Playlist",  verb: "Played" },
+  movies: { label: "Movies",   icon: "🎬", listName: "Watchlist", verb: "Watched", noun: "movie" },
+  tv:     { label: "TV Shows", icon: "📺", listName: "Watchlist", verb: "Watched", noun: "show" },
+  games:  { label: "Games",    icon: "🎮", listName: "Playlist",  verb: "Played",  noun: "game" },
 };
 
+// Vibe finder questionnaires ----------------------------------------------
+// Each section gets three questions; answer indexes are mapped to API
+// parameters in api.js (or to local vibe tags when no API key is set).
+const VIBE_QUESTIONS = {
+  movies: {
+    heading: "What should you watch tonight?",
+    button: "Find my movie",
+    questions: [
+      { q: "How much time do you have?",
+        options: ["Under 100 minutes", "Around two hours", "However long it takes"] },
+      { q: "How much attention can you give?",
+        options: ["Half-watching", "Normal", "Fully locked in"] },
+      { q: "What are you in the mood for?",
+        options: ["A good laugh", "Something emotional", "Tension & thrills", "Something thought-provoking", "A comfort watch"] },
+    ],
+  },
+  tv: {
+    heading: "What should you watch tonight?",
+    button: "Find my show",
+    questions: [
+      { q: "How long should the episodes be?",
+        options: ["Quick (~30 min)", "Standard (~60 min)", "Doesn't matter"] },
+      { q: "How invested do you want to get?",
+        options: ["Casual viewing", "Normal", "Prestige — only the best"] },
+      { q: "What are you in the mood for?",
+        options: ["Comedy", "Drama & emotion", "Dark & tense", "Sci-fi & fantasy", "Easy background watch"] },
+    ],
+  },
+  games: {
+    heading: "What should you play tonight?",
+    button: "Find my game",
+    questions: [
+      { q: "How much time do you actually have?",
+        options: ["A quick session", "A solid session", "All night"] },
+      { q: "Energy level?",
+        options: ["Low — keep it simple", "Normal", "High — I want a challenge"] },
+      { q: "Tonight's vibe?",
+        options: ["Compete & sweat", "Get lost in a story", "Chill & cozy", "Co-op with friends"] },
+    ],
+  },
+};
+
+// Maps the mood question (q3) to local vibe tags, used as a fallback when
+// the external APIs are not configured yet.
+const FALLBACK_VIBE_MAP = {
+  movies: [["funny"], ["emotional", "romantic"], ["adrenaline", "scary", "dark"], ["mindbending"], ["cozy", "nostalgic"]],
+  tv:     [["funny"], ["emotional", "romantic"], ["dark", "scary"], ["mindbending", "epic"], ["chill", "cozy"]],
+  games:  [["adrenaline"], ["emotional", "epic", "dark"], ["cozy", "chill"], ["funny", "romantic"]],
+};
+
+// Built-in starter catalog — used as a fallback until API keys are set.
 const CATALOG = [
   // ---------------- Movies ----------------
   { id: "m01", type: "movies", title: "The Grand Budapest Hotel", year: 2014, genres: ["Comedy", "Drama"], vibes: ["cozy", "funny", "nostalgic"] },
