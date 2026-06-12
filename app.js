@@ -92,8 +92,14 @@ function esc(s) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
-function stars(n) {
-  return "★".repeat(n) + "☆".repeat(5 - n);
+function stars(r) {
+  const full = Math.floor(r);
+  const half = r - full >= 0.5;
+  return "★".repeat(full) + (half ? "½" : "") + "☆".repeat(5 - full - (half ? 1 : 0));
+}
+
+function fmtRating(r) {
+  return Number.isInteger(r) ? String(r) : r.toFixed(1);
 }
 
 function hashCode(str) {
@@ -124,31 +130,53 @@ const PAGES = [
   { id: "diary", label: "Diary", icon: "📔" },
 ];
 
-function renderSidebar() {
-  const r = state.route;
+// The sidebar DOM is built once so the accordion can animate via CSS
+// transitions; syncSidebar() only flips classes and text afterwards.
+function buildSidebar() {
   sidebarEl.innerHTML = `
     <div class="side-head">🗂️ MultiMedia</div>
     <nav class="tree">
       ${Object.entries(SECTIONS).map(([key, s]) => `
-        <div class="tree-folder">
-          <button class="folder-row ${r.section === key ? "in-path" : ""}" data-folder="${key}">
-            <span class="chevron">${state.expanded[key] ? "▾" : "▸"}</span>
-            <span class="folder-icon">${state.expanded[key] ? "📂" : "📁"}</span> ${s.label}
+        <div class="tree-folder" data-folder-wrap="${key}">
+          <button class="folder-row" data-folder="${key}">
+            <span class="chevron">▸</span>
+            <span class="folder-icon">📁</span> ${s.label}
           </button>
-          <div class="folder-children ${state.expanded[key] ? "" : "hidden"}">
-            ${PAGES.map((p) => `
-              <button class="tree-item ${r.section === key && r.page === p.id ? "active" : ""}"
-                      data-section="${key}" data-page="${p.id}">
-                <span class="tree-guide"></span>${p.icon} ${p.label}
-              </button>`).join("")}
+          <div class="folder-children">
+            <div class="children-inner">
+              ${PAGES.map((p) => `
+                <button class="tree-item" data-section="${key}" data-page="${p.id}">
+                  <span class="tree-guide"></span>${p.icon} ${p.label}
+                </button>`).join("")}
+            </div>
           </div>
         </div>`).join("")}
       <div class="tree-sep"></div>
-      <button class="tree-item root ${r.page === "favorites" ? "active" : ""}" data-root="favorites">⭐ Favorites</button>
-      <button class="tree-item root ${r.page === "diary-all" ? "active" : ""}" data-root="diary-all">🗃️ Diary — everything</button>
-      <button class="tree-item root ${r.page === "settings" ? "active" : ""}" data-root="settings">⚙️ Settings</button>
+      <button class="tree-item root" data-root="favorites">⭐ Favorites</button>
+      <button class="tree-item root" data-root="diary-all">🗃️ Diary — everything</button>
+      <button class="tree-item root" data-root="settings">⚙️ Settings</button>
     </nav>
-    <div class="side-foot">${countFinished()} logged · ${state.data.watchlist.length} saved</div>`;
+    <div class="side-foot"></div>`;
+}
+
+function syncSidebar() {
+  const r = state.route;
+  for (const key of Object.keys(SECTIONS)) {
+    const wrap = sidebarEl.querySelector(`[data-folder-wrap="${key}"]`);
+    const open = !!state.expanded[key];
+    wrap.querySelector(".folder-children").classList.toggle("open", open);
+    wrap.querySelector(".chevron").textContent = open ? "▾" : "▸";
+    wrap.querySelector(".folder-icon").textContent = open ? "📂" : "📁";
+    wrap.querySelector(".folder-row").classList.toggle("in-path", r.section === key);
+  }
+  sidebarEl.querySelectorAll(".tree-item[data-page]").forEach((el) =>
+    el.classList.toggle("active", r.section === el.dataset.section && r.page === el.dataset.page)
+  );
+  sidebarEl.querySelectorAll(".tree-item.root").forEach((el) =>
+    el.classList.toggle("active", r.page === el.dataset.root)
+  );
+  sidebarEl.querySelector(".side-foot").textContent =
+    `${countFinished()} logged · ${state.data.watchlist.length} saved · ${state.data.favorites.length} ♥`;
 }
 
 function countFinished() {
@@ -223,7 +251,7 @@ function cardHTML(item) {
             ${inList ? "✓ Listed" : `＋ ${section.listName}`}
           </button>
           <button class="btn btn-small ${entry ? "btn-rated" : ""}" data-action="finish">
-            ${entry ? `★ ${entry.rating}/5` : "✔ Log it"}
+            ${entry ? `★ ${fmtRating(entry.rating)}/5` : "✔ Log it"}
           </button>
           <button class="btn btn-small btn-heart ${fav ? "fav-on" : ""}" data-action="toggle-fav" title="${fav ? "Remove from" : "Add to"} favorites">${fav ? "❤" : "♡"}</button>
         </div>
@@ -239,7 +267,7 @@ function grid(items) {
 // Pages
 // ---------------------------------------------------------------------------
 function render() {
-  renderSidebar();
+  syncSidebar();
   const { section, page } = state.route;
   if (page === "settings") return renderSettings();
   if (page === "favorites") return renderFavorites();
@@ -521,8 +549,12 @@ function entryTags(entry, item) {
     else tags.push(`<span class="tag tag-progress">▶ ${entry.seasons ? `${entry.seasons} season${entry.seasons === 1 ? "" : "s"} in` : "Watching"}</span>`);
   }
   if (item.type === "games") {
-    if (entry.mode === "competitive") tags.push(`<span class="tag tag-comp">⚔️ ${entry.rank ? esc(entry.rank) + " · " : ""}~${esc(entry.hours || "?")}h</span>`);
-    else tags.push(`<span class="tag tag-done">✓ Finished</span>`);
+    if (entry.mode === "competitive") {
+      const bits = [entry.rank ? esc(entry.rank) : "", entry.hours ? `~${esc(entry.hours)}h` : ""].filter(Boolean);
+      tags.push(`<span class="tag tag-comp">⚔️ ${bits.length ? bits.join(" · ") : "Competitive"}</span>`);
+    } else {
+      tags.push(`<span class="tag tag-done">✓ Finished${entry.hours ? ` · ~${esc(entry.hours)}h` : ""}</span>`);
+    }
   }
   return tags.join("");
 }
@@ -577,7 +609,7 @@ function renderSettings() {
     // Clear caches so Browse refetches with the new keys.
     for (const t of Object.keys(SECTIONS)) { state.browse[t].items = null; state.browse[t].error = null; }
     document.getElementById("keys-saved").textContent = "Saved ✓";
-    renderSidebar();
+    syncSidebar();
   });
 }
 
@@ -585,7 +617,51 @@ function renderSettings() {
 // Rating modal
 // ---------------------------------------------------------------------------
 const ratingModal = document.getElementById("rating-modal");
-const starLabels = ["Tap a star to rate", "★ Awful", "★★ Meh", "★★★ Decent", "★★★★ Great", "★★★★★ Masterpiece"];
+const starWords = ["", "Awful", "Meh", "Decent", "Great", "Masterpiece"];
+
+// --- Half-star picker with gray hover preview ---
+const starPickerEl = document.getElementById("star-picker");
+starPickerEl.innerHTML = [1, 2, 3, 4, 5].map((i) => `
+  <span class="pick-star" data-i="${i}">
+    <span class="ps-base">★</span>
+    <span class="ps-fill">★</span>
+  </span>`).join("");
+
+function starValueFromEvent(e) {
+  const star = e.target.closest(".pick-star");
+  if (!star) return null;
+  const rect = star.getBoundingClientRect();
+  const half = (e.clientX - rect.left) < rect.width / 2;
+  return Number(star.dataset.i) - (half ? 0.5 : 0);
+}
+
+// `preview` paints the would-be rating in gray; null paints the chosen rating in gold.
+function paintStars(preview = null) {
+  const value = preview !== null ? preview : state.modal.rating;
+  starPickerEl.querySelectorAll(".pick-star").forEach((star) => {
+    const i = Number(star.dataset.i);
+    const frac = Math.max(0, Math.min(1, value - (i - 1)));
+    const fill = star.querySelector(".ps-fill");
+    fill.style.width = `${frac * 100}%`;
+    fill.classList.toggle("preview", preview !== null);
+  });
+  const label = document.getElementById("star-label");
+  if (value === 0) label.textContent = "Tap a star to rate — left half = ½ star";
+  else label.textContent = `${fmtRating(value)} / 5 — ${starWords[Math.round(value)] || ""}`;
+  document.getElementById("modal-save").disabled = state.modal.rating === 0;
+}
+
+starPickerEl.addEventListener("mousemove", (e) => {
+  const v = starValueFromEvent(e);
+  if (v !== null) paintStars(v);
+});
+starPickerEl.addEventListener("mouseleave", () => paintStars());
+starPickerEl.addEventListener("click", (e) => {
+  const v = starValueFromEvent(e);
+  if (v === null) return;
+  state.modal.rating = v;
+  paintStars();
+});
 
 function openRatingModal(itemId) {
   const item = findItem(itemId);
@@ -608,45 +684,33 @@ function openRatingModal(itemId) {
     document.getElementById("show-status").value = entry && !entry.showDone ? "watching" : "finished";
   }
   if (item.type === "games") {
-    const comp = entry && entry.mode === "competitive";
-    document.getElementById("game-mode").value = comp ? "competitive" : "story";
-    document.getElementById("game-rank").value = comp ? entry.rank || "" : "";
-    document.getElementById("game-hours").value = comp && entry.hours ? entry.hours : "10";
-    syncGameFields();
+    const comp = !!(entry && entry.mode === "competitive");
+    document.getElementById("game-competitive").checked = comp;
+    document.getElementById("game-rank").value = (entry && entry.rank) || "";
+    document.getElementById("game-hours").value = (entry && entry.hours) || "";
+    // Expand "More options" only when something in it is already set.
+    setMoreOptions(comp || !!(entry && (entry.rank || entry.hours)));
   }
   document.getElementById("finish-date-label").textContent =
-    item.type === "tv" ? "Date" : item.type === "games" ? "Date" : "Date finished";
+    item.type === "movies" ? "Date finished" : "Date";
 
   paintStars();
   ratingModal.classList.remove("hidden");
 }
 
-function syncGameFields() {
-  const comp = document.getElementById("game-mode").value === "competitive";
-  document.getElementById("comp-fields").classList.toggle("hidden", !comp);
+function setMoreOptions(open) {
+  document.getElementById("more-options").classList.toggle("hidden", !open);
+  document.getElementById("more-toggle").textContent = open ? "▾ More options" : "▸ More options";
 }
-document.getElementById("game-mode").addEventListener("change", syncGameFields);
-
-function paintStars() {
-  document.querySelectorAll("#star-picker button").forEach((b) =>
-    b.classList.toggle("lit", Number(b.dataset.star) <= state.modal.rating)
-  );
-  document.getElementById("star-label").textContent = starLabels[state.modal.rating];
-  document.getElementById("modal-save").disabled = state.modal.rating === 0;
-}
+document.getElementById("more-toggle").addEventListener("click", () => {
+  setMoreOptions(document.getElementById("more-options").classList.contains("hidden"));
+});
 
 function closeRatingModal() {
   ratingModal.classList.add("hidden");
   state.modal.itemId = null;
   state.modal.rating = 0;
 }
-
-document.getElementById("star-picker").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-star]");
-  if (!btn) return;
-  state.modal.rating = Number(btn.dataset.star);
-  paintStars();
-});
 
 document.getElementById("modal-save").addEventListener("click", () => {
   const id = state.modal.itemId;
@@ -661,10 +725,12 @@ document.getElementById("modal-save").addEventListener("click", () => {
     entry.seasons = Math.max(0, Number(document.getElementById("seasons-watched").value) || 0);
     entry.showDone = document.getElementById("show-status").value === "finished";
   }
-  if (item && item.type === "games" && document.getElementById("game-mode").value === "competitive") {
-    entry.mode = "competitive";
-    entry.rank = document.getElementById("game-rank").value.trim();
-    entry.hours = document.getElementById("game-hours").value;
+  if (item && item.type === "games") {
+    const rank = document.getElementById("game-rank").value.trim();
+    const hours = document.getElementById("game-hours").value;
+    if (document.getElementById("game-competitive").checked) entry.mode = "competitive";
+    if (rank) entry.rank = rank;
+    if (hours) entry.hours = hours;
   }
 
   state.data.finished = state.data.finished.filter((e) => e.id !== id);
@@ -685,7 +751,91 @@ document.getElementById("modal-delete").addEventListener("click", () => {
 
 document.getElementById("modal-close").addEventListener("click", closeRatingModal);
 ratingModal.addEventListener("click", (e) => { if (e.target === ratingModal) closeRatingModal(); });
-document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeRatingModal(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") { closeRatingModal(); closePreview(); } });
+
+// ---------------------------------------------------------------------------
+// Preview modal — click a media square to see details
+// ---------------------------------------------------------------------------
+const previewModal = document.getElementById("preview-modal");
+const previewContent = document.getElementById("preview-content");
+let previewId = null;
+let previewDetails = null;
+
+function openPreview(id) {
+  const item = findItem(id);
+  if (!item) return;
+  previewId = id;
+  previewDetails = null;
+  paintPreview(item, null, API.hasKey(item.type));
+  previewModal.classList.remove("hidden");
+
+  if (API.hasKey(item.type)) {
+    API.details(item)
+      .then((d) => { if (previewId === id) { previewDetails = d; paintPreview(item, d, false); } })
+      .catch(() => { if (previewId === id) paintPreview(item, { overview: "", facts: [] }, false); });
+  }
+}
+
+function paintPreview(item, details, loading) {
+  const entry = getEntry(item.id);
+  const inList = state.data.watchlist.includes(item.id);
+  const fav = state.data.favorites.includes(item.id);
+  const section = SECTIONS[item.type];
+  const overview = details ? details.overview : (item.overview || "");
+  const facts = details ? details.facts : [];
+
+  previewContent.innerHTML = `
+    <button class="modal-close" data-preview-close>✕</button>
+    <div class="preview-layout" data-id="${esc(item.id)}">
+      <div class="preview-poster" style="${item.poster ? `background-image:url('${esc(item.poster)}')` : gradient(item)}">
+        ${item.poster ? "" : `<span class="poster-icon">${section.icon}</span>`}
+      </div>
+      <div class="preview-info">
+        <h2>${esc(item.title)} <span class="diary-year">${item.year || ""}</span></h2>
+        <p class="preview-genres">${section.icon} ${(item.genres || []).map(esc).join(" · ") || section.label}</p>
+        ${entry ? `<p class="preview-status">${stars(entry.rating)} <span class="diary-year">your rating</span>${entryTags(entry, item)}</p>` : ""}
+        ${facts.length ? `<ul class="preview-facts">${facts.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+        <p class="preview-overview">${loading ? "Loading details…" : (esc(overview) || "<em>No description available.</em>")}</p>
+        <div class="preview-actions">
+          <button class="btn ${inList ? "btn-active" : ""}" data-action="toggle-list">${inList ? "✓ Listed" : `＋ ${section.listName}`}</button>
+          <button class="btn ${entry ? "btn-rated" : ""}" data-action="finish">${entry ? `★ ${fmtRating(entry.rating)}/5 — edit` : "✔ Log it"}</button>
+          <button class="btn btn-heart ${fav ? "fav-on" : ""}" data-action="toggle-fav">${fav ? "❤ Favorite" : "♡ Favorite"}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function closePreview() {
+  previewModal.classList.add("hidden");
+  previewId = null;
+}
+
+previewModal.addEventListener("click", (e) => {
+  if (e.target === previewModal || e.target.closest("[data-preview-close]")) { closePreview(); return; }
+  const actionEl = e.target.closest("[data-action]");
+  if (!actionEl) return;
+  const id = previewId;
+  const item = findItem(id);
+  if (!item) return;
+  switch (actionEl.dataset.action) {
+    case "toggle-list":
+      if (state.data.watchlist.includes(id)) state.data.watchlist = state.data.watchlist.filter((w) => w !== id);
+      else { state.data.watchlist.push(id); remember(item); }
+      save();
+      break;
+    case "toggle-fav":
+      if (state.data.favorites.includes(id)) state.data.favorites = state.data.favorites.filter((f) => f !== id);
+      else { state.data.favorites.push(id); remember(item); }
+      save();
+      break;
+    case "finish":
+      closePreview();
+      openRatingModal(id);
+      return;
+  }
+  paintPreview(item, previewDetails, false);
+  render();
+});
 
 // ---------------------------------------------------------------------------
 // Main content event handling
@@ -713,7 +863,15 @@ appEl.addEventListener("click", (e) => {
   }
 
   const actionEl = e.target.closest("[data-action]");
-  if (!actionEl) return;
+  if (!actionEl) {
+    // Clicking the media square itself (not a button) opens the preview.
+    const poster = e.target.closest(".card .poster, .card .card-title, .diary-poster");
+    if (poster) {
+      const holder = poster.closest("[data-id]");
+      if (holder) openPreview(holder.dataset.id);
+    }
+    return;
+  }
   const action = actionEl.dataset.action;
   const card = actionEl.closest("[data-id]");
   const id = card ? card.dataset.id : null;
@@ -770,4 +928,5 @@ appEl.addEventListener("change", (e) => {
 });
 
 // ---------------------------------------------------------------------------
+buildSidebar();
 render();

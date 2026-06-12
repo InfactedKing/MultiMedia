@@ -59,7 +59,38 @@ const API = {
       genreIds: raw.genre_ids || [],
       voteAvg: raw.vote_average || 0,
       voteCount: raw.vote_count || 0,
+      overview: raw.overview || "",
     };
+  },
+
+  // Rich detail for the preview page. Returns { overview, facts: [strings] }.
+  async details(item) {
+    if (!this.hasKey(item.type)) return null;
+    if (item.type === "games") {
+      const id = item.id.replace("rawg-", "");
+      const url = new URL(`https://api.rawg.io/api/games/${id}`);
+      url.searchParams.set("key", this.keys.rawg.trim());
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`RAWG error ${res.status}`);
+      const d = await res.json();
+      const facts = [];
+      if (d.playtime) facts.push(`⏱️ ~${d.playtime}h average playtime`);
+      if (d.metacritic) facts.push(`🏆 Metacritic ${d.metacritic}`);
+      if (d.released) facts.push(`📅 Released ${d.released}`);
+      if (d.developers && d.developers.length) facts.push(`🛠️ ${d.developers.map((x) => x.name).slice(0, 2).join(", ")}`);
+      const overview = (d.description_raw || "").split("\n")[0] || "";
+      return { overview, facts };
+    }
+    const isMovie = item.type === "movies";
+    const tmdbId = item.id.replace(isMovie ? "tmdb-m-" : "tmdb-t-", "");
+    const d = await this.tmdbFetch(`/${isMovie ? "movie" : "tv"}/${tmdbId}`);
+    const facts = [];
+    if (isMovie && d.runtime) facts.push(`⏱️ ${d.runtime} min`);
+    if (!isMovie && d.number_of_seasons) facts.push(`📺 ${d.number_of_seasons} season${d.number_of_seasons === 1 ? "" : "s"} · ${d.number_of_episodes} episodes`);
+    if (d.vote_average) facts.push(`🏆 TMDB ${d.vote_average.toFixed(1)} (${d.vote_count.toLocaleString()} votes)`);
+    if (isMovie && d.release_date) facts.push(`📅 Released ${d.release_date}`);
+    if (!isMovie && d.status) facts.push(`📡 ${d.status}`);
+    return { overview: d.overview || "", facts };
   },
 
   // ---------------- RAWG ----------------

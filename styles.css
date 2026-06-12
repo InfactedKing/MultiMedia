@@ -97,7 +97,16 @@ main { flex: 1; min-width: 0; }
 .folder-row.in-path { color: var(--accent); }
 .chevron { width: 0.8em; display: inline-block; color: var(--text-dim); }
 
-.folder-children { position: relative; }
+/* Accordion animation: grid-rows 0fr → 1fr animates height smoothly */
+.folder-children {
+  position: relative;
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s ease;
+}
+.folder-children.open { grid-template-rows: 1fr; }
+.children-inner { overflow: hidden; min-height: 0; }
+.chevron { transition: transform 0.2s; }
 .tree-item {
   display: flex;
   align-items: center;
@@ -444,17 +453,24 @@ main { flex: 1; min-width: 0; }
 }
 .modal-close:hover { color: var(--text); }
 
-.star-picker { display: flex; gap: 0.2rem; justify-content: center; margin: 0.5rem 0 0.2rem; }
-.star-picker button {
-  background: transparent;
-  border: none;
-  font-size: 2.2rem;
-  color: var(--border);
-  transition: color 0.1s, transform 0.1s;
+.star-picker { display: flex; gap: 0.25rem; justify-content: center; margin: 0.5rem 0 0.2rem; cursor: pointer; }
+.pick-star {
+  position: relative;
+  font-size: 2.4rem;
   line-height: 1;
+  user-select: none;
 }
-.star-picker button:hover { transform: scale(1.15); }
-.star-picker button.lit { color: var(--star); }
+.ps-base { color: var(--border); }
+.ps-fill {
+  position: absolute;
+  top: 0; left: 0;
+  width: 0;
+  overflow: hidden;
+  color: var(--star);
+  white-space: nowrap;
+  transition: width 0.06s linear;
+}
+.ps-fill.preview { color: #8a97a5; } /* gray hover preview */
 .star-label { text-align: center; color: var(--text-dim); font-size: 0.85rem; margin-bottom: 1rem; }
 
 .field { display: block; margin-bottom: 0.9rem; }
@@ -477,6 +493,58 @@ main { flex: 1; min-width: 0; }
   justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 1.1rem;
+}
+
+.more-toggle {
+  background: transparent;
+  border: none;
+  color: var(--accent-blue);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.2rem 0;
+  margin-bottom: 0.6rem;
+  display: block;
+}
+.check-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  margin-bottom: 0.9rem;
+  cursor: pointer;
+}
+.check-field input { accent-color: var(--accent-orange); }
+
+/* ---------- Preview modal ---------- */
+.modal-wide { max-width: 680px; }
+.preview-layout { display: flex; gap: 1.2rem; }
+.preview-poster {
+  width: 180px;
+  flex-shrink: 0;
+  aspect-ratio: 2 / 2.8;
+  border-radius: 10px;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2.5rem;
+}
+.preview-info { flex: 1; min-width: 0; }
+.preview-info h2 { margin-bottom: 0.15rem; }
+.preview-genres { color: var(--text-dim); font-size: 0.88rem; margin-bottom: 0.5rem; }
+.preview-status { color: var(--star); margin-bottom: 0.5rem; }
+.preview-facts { list-style: none; margin: 0 0 0.7rem; display: flex; flex-direction: column; gap: 0.15rem; }
+.preview-facts li { font-size: 0.84rem; color: var(--text-dim); }
+.preview-overview { font-size: 0.9rem; line-height: 1.55; color: var(--text); margin-bottom: 1rem; max-height: 11em; overflow-y: auto; }
+.preview-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.card .poster, .card .card-title, .diary-poster { cursor: pointer; }
+
+@media (max-width: 600px) {
+  .preview-layout { flex-direction: column; }
+  .preview-poster { width: 140px; }
 }
 
 /* ---------- Responsive ---------- */

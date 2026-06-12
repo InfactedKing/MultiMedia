@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MultiMedia — movies, shows & games</title>
-  <link rel="stylesheet" href="styles.css?v=4" />
+  <link rel="stylesheet" href="styles.css?v=5" />
 </head>
 <body>
   <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
@@ -20,13 +20,7 @@
       <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
       <h2 id="modal-title">Log it</h2>
       <p class="modal-subtitle" id="modal-item-title"></p>
-      <div class="star-picker" id="star-picker" aria-label="Rating from 1 to 5 stars">
-        <button data-star="1">★</button>
-        <button data-star="2">★</button>
-        <button data-star="3">★</button>
-        <button data-star="4">★</button>
-        <button data-star="5">★</button>
-      </div>
+      <div class="star-picker" id="star-picker" aria-label="Rating from 0.5 to 5 stars"></div>
       <p class="star-label" id="star-label">Tap a star to rate</p>
 
       <!-- TV shows: season progress -->
@@ -44,23 +38,14 @@
         </label>
       </div>
 
-      <!-- Games: story vs competitive -->
+      <!-- Games: extra fields under "More options" -->
       <div id="game-fields" class="hidden">
-        <label class="field">
-          <span>Game type</span>
-          <select id="game-mode">
-            <option value="story">🏁 Has an ending — I finished it</option>
-            <option value="competitive">⚔️ Competitive / endless</option>
-          </select>
-        </label>
-        <div id="comp-fields" class="hidden">
+        <button type="button" class="more-toggle" id="more-toggle">▸ More options</button>
+        <div id="more-options" class="hidden">
           <label class="field">
-            <span>Your rank <em>(optional)</em></span>
-            <input type="text" id="game-rank" placeholder="e.g. Gold 2, Immortal, 1800 elo" />
-          </label>
-          <label class="field">
-            <span>Hours played (around)</span>
+            <span>Hours played (around) <em>(optional)</em></span>
             <select id="game-hours">
+              <option value="">—</option>
               <option value="10">~10h</option>
               <option value="20">~20h</option>
               <option value="50">~50h</option>
@@ -69,6 +54,14 @@
               <option value="500">~500h</option>
               <option value="1000+">1000h+</option>
             </select>
+          </label>
+          <label class="field">
+            <span>Your rank <em>(optional)</em></span>
+            <input type="text" id="game-rank" placeholder="e.g. Gold 2, Immortal, 1800 elo" />
+          </label>
+          <label class="check-field">
+            <input type="checkbox" id="game-competitive" />
+            <span>⚔️ Competitive / endless — this game can't be finished</span>
           </label>
         </div>
       </div>
@@ -88,8 +81,13 @@
     </div>
   </div>
 
-  <script src="data.js?v=4"></script>
-  <script src="api.js?v=4"></script>
-  <script src="app.js?v=4"></script>
+  <!-- Media preview modal -->
+  <div class="modal-backdrop hidden" id="preview-modal">
+    <div class="modal modal-wide" id="preview-content"></div>
+  </div>
+
+  <script src="data.js?v=5"></script>
+  <script src="api.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
