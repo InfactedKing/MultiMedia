@@ -416,6 +416,7 @@ main { flex: 1; min-width: 0; }
 .diary-sub { color: var(--text-dim); font-size: 0.82rem; }
 .diary-note { font-size: 0.85rem; font-style: italic; color: var(--text-dim); margin-top: 0.2rem; }
 .diary-rating { color: var(--star); font-size: 1.05rem; letter-spacing: 0.1em; white-space: nowrap; }
+.stars-empty { color: #39434e; }
 .diary-row .btn-small { flex: 0 0 auto; }
 
 /* ---------- Modals & fields ---------- */

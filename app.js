@@ -95,7 +95,9 @@ function esc(s) {
 function stars(r) {
   const full = Math.floor(r);
   const half = r - full >= 0.5;
-  return "★".repeat(full) + (half ? "½" : "") + "☆".repeat(5 - full - (half ? 1 : 0));
+  const filled = "★".repeat(full) + (half ? "½" : "");
+  const empty = "★".repeat(5 - full - (half ? 1 : 0));
+  return filled + (empty ? `<span class="stars-empty">${empty}</span>` : "");
 }
 
 function fmtRating(r) {
