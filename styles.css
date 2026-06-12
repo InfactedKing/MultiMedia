@@ -362,6 +362,23 @@ main { flex: 1; min-width: 0; }
 }
 .filter-bar .btn-small { flex: 0 0 auto; }
 
+.tag {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.08rem 0.5rem;
+  border-radius: 99px;
+  margin-left: 0.45rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.tag-done { background: rgba(45, 212, 167, 0.15); color: var(--accent); border: 1px solid rgba(45, 212, 167, 0.4); }
+.tag-progress { background: rgba(255, 120, 73, 0.13); color: var(--accent-orange); border: 1px solid rgba(255, 120, 73, 0.4); }
+.tag-comp { background: rgba(64, 188, 244, 0.12); color: var(--accent-blue); border: 1px solid rgba(64, 188, 244, 0.4); }
+
+.btn-heart { flex: 0 0 auto !important; min-width: 2rem; font-size: 0.9rem; }
+.btn-heart.fav-on { border-color: #e0556a; color: #e0556a; }
+
 .diary-list { display: flex; flex-direction: column; gap: 0.6rem; }
 .diary-row {
   display: flex;

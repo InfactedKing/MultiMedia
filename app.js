@@ -28,7 +28,11 @@ const state = {
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (!d.favorites) d.favorites = [];
+      return d;
+    }
   } catch (e) { /* corrupted storage — fall through */ }
 
   // Migrate data from the previous version of the site.
@@ -40,11 +44,11 @@ function load() {
       const lookup = (id) => CATALOG.find((c) => c.id === id) || (old.custom || []).find((c) => c.id === id);
       for (const id of (old.watchlist || [])) { const it = lookup(id); if (it) library[id] = it; }
       for (const e of (old.finished || [])) { const it = lookup(e.id); if (it) library[e.id] = it; }
-      return { keys: { tmdb: "", rawg: "" }, watchlist: old.watchlist || [], finished: old.finished || [], library };
+      return { keys: { tmdb: "", rawg: "" }, watchlist: old.watchlist || [], finished: old.finished || [], favorites: [], library };
     }
   } catch (e) { /* ignore broken legacy data */ }
 
-  return { keys: { tmdb: "", rawg: "" }, watchlist: [], finished: [], library: {} };
+  return { keys: { tmdb: "", rawg: "" }, watchlist: [], finished: [], favorites: [], library: {} };
 }
 
 function save() {
@@ -140,6 +144,7 @@ function renderSidebar() {
           </div>
         </div>`).join("")}
       <div class="tree-sep"></div>
+      <button class="tree-item root ${r.page === "favorites" ? "active" : ""}" data-root="favorites">⭐ Favorites</button>
       <button class="tree-item root ${r.page === "diary-all" ? "active" : ""}" data-root="diary-all">🗃️ Diary — everything</button>
       <button class="tree-item root ${r.page === "settings" ? "active" : ""}" data-root="settings">⚙️ Settings</button>
     </nav>
@@ -154,9 +159,13 @@ sidebarEl.addEventListener("click", (e) => {
   const folder = e.target.closest("[data-folder]");
   if (folder) {
     const key = folder.dataset.folder;
-    state.expanded[key] = !state.expanded[key];
-    // Opening a folder also navigates to its Browse page.
-    if (state.expanded[key]) state.route = { section: key, page: "browse" };
+    const opening = !state.expanded[key];
+    // Accordion: opening a folder collapses the others.
+    for (const k of Object.keys(state.expanded)) state.expanded[k] = false;
+    if (opening) {
+      state.expanded[key] = true;
+      state.route = { section: key, page: "browse" };
+    }
     render();
     return;
   }
@@ -189,6 +198,7 @@ function closeSidebarOnMobile() {
 function cardHTML(item) {
   const entry = getEntry(item.id);
   const inList = state.data.watchlist.includes(item.id);
+  const fav = state.data.favorites.includes(item.id);
   const section = SECTIONS[item.type];
   const posterInner = item.poster
     ? `<div class="poster has-img" style="background-image:url('${esc(item.poster)}')">`
@@ -213,8 +223,9 @@ function cardHTML(item) {
             ${inList ? "✓ Listed" : `＋ ${section.listName}`}
           </button>
           <button class="btn btn-small ${entry ? "btn-rated" : ""}" data-action="finish">
-            ${entry ? `★ ${entry.rating}/5` : "✔ Finished"}
+            ${entry ? `★ ${entry.rating}/5` : "✔ Log it"}
           </button>
+          <button class="btn btn-small btn-heart ${fav ? "fav-on" : ""}" data-action="toggle-fav" title="${fav ? "Remove from" : "Add to"} favorites">${fav ? "❤" : "♡"}</button>
         </div>
       </div>
     </article>`;
@@ -231,6 +242,7 @@ function render() {
   renderSidebar();
   const { section, page } = state.route;
   if (page === "settings") return renderSettings();
+  if (page === "favorites") return renderFavorites();
   if (page === "diary-all") return renderDiary(null);
   if (page === "diary") return renderDiary(section);
   if (page === "vibe") return renderVibe(section);
@@ -465,15 +477,60 @@ function renderDiary(type) {
               <article class="diary-row" data-id="${esc(item.id)}">
                 <div class="diary-poster" style="${item.poster ? `background-image:url('${esc(item.poster)}')` : gradient(item)}">${item.poster ? "" : SECTIONS[item.type].icon}</div>
                 <div class="diary-info">
-                  <h3>${esc(item.title)} <span class="diary-year">${item.year || ""}</span></h3>
-                  <p class="diary-sub">${SECTIONS[item.type].icon} ${SECTIONS[item.type].verb} on ${esc(entry.date)}${item.genres && item.genres.length ? " · " + item.genres.map(esc).join(", ") : ""}</p>
+                  <h3>${esc(item.title)} <span class="diary-year">${item.year || ""}</span>${entryTags(entry, item)}</h3>
+                  <p class="diary-sub">${SECTIONS[item.type].icon} ${entryVerb(entry, item)} ${esc(entry.date)}${item.genres && item.genres.length ? " · " + item.genres.map(esc).join(", ") : ""}</p>
                   ${entry.note ? `<p class="diary-note">"${esc(entry.note)}"</p>` : ""}
                 </div>
                 <div class="diary-rating">${stars(entry.rating)}</div>
+                <button class="btn btn-small btn-heart ${state.data.favorites.includes(item.id) ? "fav-on" : ""}" data-action="toggle-fav">${state.data.favorites.includes(item.id) ? "❤" : "♡"}</button>
                 <button class="btn btn-small" data-action="finish">✎ Edit</button>
               </article>`).join("")}
           </div>`}
     </section>`;
+}
+
+// ----- Favorites ----------------------------------------------------------------
+function renderFavorites() {
+  const favs = state.data.favorites.map(findItem).filter(Boolean);
+  const groups = Object.entries(SECTIONS)
+    .map(([key, s]) => ({ key, s, items: favs.filter((it) => it.type === key) }))
+    .filter((g) => g.items.length > 0);
+
+  appEl.innerHTML = `
+    <section class="page">
+      ${crumbs(["Favorites"])}
+      <div class="page-head">
+        <h1>⭐ Favorites</h1>
+        <span class="diary-stats">${favs.length} favorite${favs.length === 1 ? "" : "s"}</span>
+      </div>
+      ${favs.length === 0
+        ? `<div class="panel"><p class="empty">No favorites yet — tap the ♡ on anything you love and it'll live here.</p></div>`
+        : groups.map((g) => `
+          <div class="panel">
+            <h2>${g.s.icon} ${g.s.label} <span class="count">${g.items.length}</span></h2>
+            ${grid(g.items)}
+          </div>`).join("")}
+    </section>`;
+}
+
+// Status tags shown next to a diary entry's title.
+function entryTags(entry, item) {
+  const tags = [];
+  if (item.type === "tv") {
+    if (entry.showDone) tags.push(`<span class="tag tag-done">✓ Finished${entry.seasons ? ` · ${entry.seasons} season${entry.seasons === 1 ? "" : "s"}` : ""}</span>`);
+    else tags.push(`<span class="tag tag-progress">▶ ${entry.seasons ? `${entry.seasons} season${entry.seasons === 1 ? "" : "s"} in` : "Watching"}</span>`);
+  }
+  if (item.type === "games") {
+    if (entry.mode === "competitive") tags.push(`<span class="tag tag-comp">⚔️ ${entry.rank ? esc(entry.rank) + " · " : ""}~${esc(entry.hours || "?")}h</span>`);
+    else tags.push(`<span class="tag tag-done">✓ Finished</span>`);
+  }
+  return tags.join("");
+}
+
+function entryVerb(entry, item) {
+  if (item.type === "tv" && !entry.showDone) return "Last logged";
+  if (item.type === "games" && entry.mode === "competitive") return "Logged";
+  return `${SECTIONS[item.type].verb} on`;
 }
 
 // ----- Settings ----------------------------------------------------------------
@@ -542,9 +599,33 @@ function openRatingModal(itemId) {
   document.getElementById("finish-date").value = entry ? entry.date : new Date().toISOString().slice(0, 10);
   document.getElementById("finish-note").value = entry ? entry.note || "" : "";
   document.getElementById("modal-delete").classList.toggle("hidden", !entry);
+
+  // Type-specific fields
+  document.getElementById("tv-fields").classList.toggle("hidden", item.type !== "tv");
+  document.getElementById("game-fields").classList.toggle("hidden", item.type !== "games");
+  if (item.type === "tv") {
+    document.getElementById("seasons-watched").value = entry && entry.seasons ? entry.seasons : "";
+    document.getElementById("show-status").value = entry && !entry.showDone ? "watching" : "finished";
+  }
+  if (item.type === "games") {
+    const comp = entry && entry.mode === "competitive";
+    document.getElementById("game-mode").value = comp ? "competitive" : "story";
+    document.getElementById("game-rank").value = comp ? entry.rank || "" : "";
+    document.getElementById("game-hours").value = comp && entry.hours ? entry.hours : "10";
+    syncGameFields();
+  }
+  document.getElementById("finish-date-label").textContent =
+    item.type === "tv" ? "Date" : item.type === "games" ? "Date" : "Date finished";
+
   paintStars();
   ratingModal.classList.remove("hidden");
 }
+
+function syncGameFields() {
+  const comp = document.getElementById("game-mode").value === "competitive";
+  document.getElementById("comp-fields").classList.toggle("hidden", !comp);
+}
+document.getElementById("game-mode").addEventListener("change", syncGameFields);
 
 function paintStars() {
   document.querySelectorAll("#star-picker button").forEach((b) =>
@@ -575,8 +656,19 @@ document.getElementById("modal-save").addEventListener("click", () => {
   const date = document.getElementById("finish-date").value || new Date().toISOString().slice(0, 10);
   const note = document.getElementById("finish-note").value.trim();
 
+  const entry = { id, rating: state.modal.rating, date, note };
+  if (item && item.type === "tv") {
+    entry.seasons = Math.max(0, Number(document.getElementById("seasons-watched").value) || 0);
+    entry.showDone = document.getElementById("show-status").value === "finished";
+  }
+  if (item && item.type === "games" && document.getElementById("game-mode").value === "competitive") {
+    entry.mode = "competitive";
+    entry.rank = document.getElementById("game-rank").value.trim();
+    entry.hours = document.getElementById("game-hours").value;
+  }
+
   state.data.finished = state.data.finished.filter((e) => e.id !== id);
-  state.data.finished.push({ id, rating: state.modal.rating, date, note });
+  state.data.finished.push(entry);
   // Finishing something takes it off the watchlist.
   state.data.watchlist = state.data.watchlist.filter((w) => w !== id);
   save();
@@ -643,6 +735,19 @@ appEl.addEventListener("click", (e) => {
     case "finish":
       openRatingModal(id);
       break;
+    case "toggle-fav": {
+      const item = findItem(id);
+      if (!item) break;
+      if (state.data.favorites.includes(id)) {
+        state.data.favorites = state.data.favorites.filter((f) => f !== id);
+      } else {
+        state.data.favorites.push(id);
+        remember(item);
+      }
+      save();
+      render();
+      break;
+    }
     case "toggle-dir":
       state.diary.sortDir = state.diary.sortDir === "desc" ? "asc" : "desc";
       render();

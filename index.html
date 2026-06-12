@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MultiMedia — movies, shows & games</title>
-  <link rel="stylesheet" href="styles.css?v=3" />
+  <link rel="stylesheet" href="styles.css?v=4" />
 </head>
 <body>
   <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
@@ -28,8 +28,53 @@
         <button data-star="5">★</button>
       </div>
       <p class="star-label" id="star-label">Tap a star to rate</p>
+
+      <!-- TV shows: season progress -->
+      <div id="tv-fields" class="hidden">
+        <label class="field">
+          <span>Seasons watched</span>
+          <input type="number" id="seasons-watched" min="0" max="99" placeholder="e.g. 3" />
+        </label>
+        <label class="field">
+          <span>Show status</span>
+          <select id="show-status">
+            <option value="finished">✓ Finished the show</option>
+            <option value="watching">▶ Still watching</option>
+          </select>
+        </label>
+      </div>
+
+      <!-- Games: story vs competitive -->
+      <div id="game-fields" class="hidden">
+        <label class="field">
+          <span>Game type</span>
+          <select id="game-mode">
+            <option value="story">🏁 Has an ending — I finished it</option>
+            <option value="competitive">⚔️ Competitive / endless</option>
+          </select>
+        </label>
+        <div id="comp-fields" class="hidden">
+          <label class="field">
+            <span>Your rank <em>(optional)</em></span>
+            <input type="text" id="game-rank" placeholder="e.g. Gold 2, Immortal, 1800 elo" />
+          </label>
+          <label class="field">
+            <span>Hours played (around)</span>
+            <select id="game-hours">
+              <option value="10">~10h</option>
+              <option value="20">~20h</option>
+              <option value="50">~50h</option>
+              <option value="100">~100h</option>
+              <option value="250">~250h</option>
+              <option value="500">~500h</option>
+              <option value="1000+">1000h+</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       <label class="field">
-        <span>Date finished</span>
+        <span id="finish-date-label">Date finished</span>
         <input type="date" id="finish-date" />
       </label>
       <label class="field">
@@ -43,8 +88,8 @@
     </div>
   </div>
 
-  <script src="data.js?v=3"></script>
-  <script src="api.js?v=3"></script>
-  <script src="app.js?v=3"></script>
+  <script src="data.js?v=4"></script>
+  <script src="api.js?v=4"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>
