@@ -241,7 +241,33 @@ main { flex: 1; min-width: 0; }
   display: flex;
   flex-direction: column;
   transition: transform 0.15s, border-color 0.15s;
+  position: relative;
 }
+.match-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: var(--accent);
+  color: #0a2a20;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.18rem 0.55rem;
+  border-radius: 99px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.4);
+}
+.card-reasons {
+  list-style: none;
+  margin: 0 0 0.45rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.card-reasons li {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  line-height: 1.3;
+}
+.show-more-wrap { text-align: center; margin-top: 1rem; }
 .card:hover { transform: translateY(-3px); border-color: var(--text-dim); }
 
 .poster {

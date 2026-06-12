@@ -16,9 +16,9 @@ const state = {
     games: { query: "", items: null, error: null, seq: 0 },
   },
   vibe: {
-    movies: { answers: [null, null, null], results: null, loading: false, error: null },
-    tv: { answers: [null, null, null], results: null, loading: false, error: null },
-    games: { answers: [null, null, null], results: null, loading: false, error: null },
+    movies: { answers: [null, null, null], results: null, shown: 12, loading: false, error: null },
+    tv: { answers: [null, null, null], results: null, shown: 12, loading: false, error: null },
+    games: { answers: [null, null, null], results: null, shown: 12, loading: false, error: null },
   },
   diary: { typeFilter: "all", minRating: 0, sortBy: "date", sortDir: "desc" },
   modal: { itemId: null, rating: 0 },
@@ -199,6 +199,7 @@ function cardHTML(item) {
         ${entry ? `<span class="poster-badge rated">${stars(entry.rating)}</span>` : ""}
         ${inList && !entry ? `<span class="poster-badge listed">＋ ${section.listName}</span>` : ""}
       </div>
+      ${item._match !== undefined ? `<span class="match-badge">${item._match}% match</span>` : ""}
       <div class="card-body">
         <h3 class="card-title">${esc(item.title)}</h3>
         <div class="card-meta">
@@ -206,6 +207,7 @@ function cardHTML(item) {
           ${item.score ? `<span class="card-score">★ ${esc(item.score)}</span>` : ""}
         </div>
         <div class="card-genres">${(item.genres || []).map(esc).join(" · ")}</div>
+        ${item._reasons && item._reasons.length ? `<ul class="card-reasons">${item._reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
         <div class="card-actions">
           <button class="btn btn-small ${inList ? "btn-active" : ""}" data-action="toggle-list">
             ${inList ? "✓ Listed" : `＋ ${section.listName}`}
@@ -343,6 +345,7 @@ function renderVibe(type) {
           </div>`).join("")}
         <button class="btn btn-find" id="vibe-find" ${ready ? "" : "disabled"}>⚡ ${esc(cfg.button)}</button>
         ${!API.hasKey(type) ? `<p class="panel-hint">Using the built-in catalog — <a href="#" data-goto="settings">add an API key</a> for live results from ${type === "games" ? "RAWG" : "TMDB"}.</p>` : ""}
+        ${state.data.finished.length ? `<p class="panel-hint">Learning from ${state.data.finished.length} rating${state.data.finished.length === 1 ? "" : "s"} in your diary.</p>` : `<p class="panel-hint">Tip: rate things in your diary and recommendations will adapt to your taste.</p>`}
       </div>
 
       <div id="vibe-results">${vibeResultsHTML(type)}</div>
@@ -355,7 +358,13 @@ function vibeResultsHTML(type) {
   if (v.error) return `<div class="panel"><p class="empty error">${esc(v.error)}</p></div>`;
   if (v.results === null) return "";
   if (v.results.length === 0) return `<div class="panel"><p class="empty">Nothing matched — try different answers.</p></div>`;
-  return `<div class="panel"><h2>🎯 Your matches <span class="count">${v.results.length}</span></h2>${grid(v.results)}</div>`;
+  const visible = v.results.slice(0, v.shown);
+  const remaining = v.results.length - visible.length;
+  return `<div class="panel">
+    <h2>🎯 Your matches <span class="count">${v.results.length}</span></h2>
+    ${grid(visible)}
+    ${remaining > 0 ? `<div class="show-more-wrap"><button class="btn" data-action="show-more">Show more (${remaining} left)</button></div>` : ""}
+  </div>`;
 }
 
 async function runVibeSearch(type) {
@@ -363,11 +372,14 @@ async function runVibeSearch(type) {
   v.loading = true;
   v.error = null;
   v.results = null;
+  v.shown = 12;
   paintVibe(type);
   try {
-    v.results = API.hasKey(type)
-      ? await API.vibe(type, v.answers)
-      : API.fallbackVibe(type, v.answers);
+    v.results = await API.recommend(type, v.answers, {
+      finished: state.data.finished,
+      watchlist: state.data.watchlist,
+      library: state.data.library,
+    });
   } catch (err) {
     v.error = err.message;
     v.results = [];
@@ -635,6 +647,12 @@ appEl.addEventListener("click", (e) => {
       state.diary.sortDir = state.diary.sortDir === "desc" ? "asc" : "desc";
       render();
       break;
+    case "show-more": {
+      const type = state.route.section;
+      state.vibe[type].shown += 12;
+      paintVibe(type);
+      break;
+    }
   }
 });
 
